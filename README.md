@@ -1,4 +1,4 @@
-git clone git@github.com:Manjo80/7dtd_server_installer.git
+git clone https://github.com/Manjo80/7dtd_server_installer.git
 
 hmod +x run.sh
 ./run.sh
