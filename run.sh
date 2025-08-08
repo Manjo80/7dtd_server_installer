@@ -8,7 +8,11 @@ source "${BASE_DIR}/config.env"
 source "${BASE_DIR}/lib/common.sh"
 require_root
 
-# Reihenfolge der Tasks
+# Optional: alles ausführbar machen (praktisch, aber nicht zwingend wenn wir mit `bash` ausführen)
+chmod +x "${BASE_DIR}/lib/common.sh" || true
+chmod +x "${BASE_DIR}/tasks/"*.sh || true
+
+# Reihenfolge der Tasks – nur dieses eine Loop behalten
 TASKS=(
   "00_packages.sh"
   "10_user.sh"
@@ -25,4 +29,5 @@ for t in "${TASKS[@]}"; do
   log "Task: ${t}"
   bash "${BASE_DIR}/tasks/${t}"
 done
+
 ok "Alle Tasks erledigt."
