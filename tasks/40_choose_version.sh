@@ -1,4 +1,3 @@
-# 7dtd-installer/tasks/40_choose_version.sh
 #!/usr/bin/env bash
 set -euo pipefail
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -6,10 +5,10 @@ source "${BASE_DIR}/config.env"
 [ -f "${BASE_DIR}/config.local" ] && source "${BASE_DIR}/config.local"
 source "${BASE_DIR}/lib/common.sh"
 
-# AppID ggf. interaktiv ändern
-if [ "${NON_INTERACTIVE}" -eq 0 ]; then
+# Falls interaktiv, optional AppID ändern
+if [ "${NON_INTERACTIVE:-0}" -eq 0 ]; then
   echo
-  echo "Standard-AppID ist ${APPID} (7DTD Dedicated=294420)."
+  echo "Standard-AppID ist ${APPID} (7DTD Dedicated = 294420)."
   read -rp "Andere AppID verwenden? (Enter für ${APPID}): " inp
   inp="${inp:-$APPID}"
   if [[ "$inp" =~ ^[0-9]+$ ]]; then APPID="$inp"; else err "Ungültig, bleibe bei ${APPID}"; fi
@@ -17,9 +16,8 @@ else
   log "NON_INTERACTIVE: AppID=${APPID}"
 fi
 
-# Branchliste auslesen
-tmp="$(mktemp)"; trap_rm_tmp tmp
-log "Lese Branches/Builds via app_info_print…"
+tmp="$(mktemp)"; trap '[[ -n "${tmp:-}" ]] && rm -f "$tmp"; trap - RETURN' RETURN
+log "Lese Branches via app_info_print (APPID=${APPID})…"
 steamcmd_exec +login anonymous +app_info_print "${APPID}" +quit >"$tmp" || true
 
 BRANCHES=()
@@ -45,15 +43,29 @@ done <"$tmp"
 
 [ ${#BRANCHES[@]} -eq 0 ] && BRANCHES=(public)
 
+# 1) Automatische Auswahl, wenn PREFERRED_BRANCH_NAME definiert ist und existiert
 SELECTED_BRANCH="${SELECTED_BRANCH:-}"
-if [ -n "${SELECTED_BRANCH}" ]; then
-  ok "Branch per Env/Flag vorgegeben: ${SELECTED_BRANCH}"
-else
-  if [ "${NON_INTERACTIVE}" -eq 1 ]; then
+if [ -z "${SELECTED_BRANCH}" ] && [ -n "${PREFERRED_BRANCH_NAME:-}" ]; then
+  for b in "${BRANCHES[@]}"; do
+    if [ "$b" = "$PREFERRED_BRANCH_NAME" ]; then
+      SELECTED_BRANCH="$b"
+      ok "Bevorzugter Branch gefunden: $SELECTED_BRANCH"
+      break
+    fi
+  done
+
+  if [ -z "${SELECTED_BRANCH}" ]; then
+    err "Bevorzugter Branch '${PREFERRED_BRANCH_NAME}' existiert nicht. Du wählst jetzt manuell."
+  fi
+fi
+
+# 2) Wenn immer noch nichts gesetzt → interaktive Auswahl (oder non-interactive default)
+if [ -z "${SELECTED_BRANCH}" ]; then
+  if [ "${NON_INTERACTIVE:-0}" -eq 1 ]; then
     SELECTED_BRANCH="public"
     ok "NON_INTERACTIVE: setze Branch=${SELECTED_BRANCH}"
   else
-    echo "Verfügbare Branches:"
+    echo "Verfügbare Branches (mit BuildID / Zeit):"
     i=1
     for b in "${BRANCHES[@]}"; do
       when=""; [[ -n "${BR_TIME[$b]:-}" ]] && when="$(date -d @"${BR_TIME[$b]}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "${BR_TIME[$b]}")"
@@ -61,16 +73,19 @@ else
       ((i++))
     done
     read -rp "Wähle Branch [1-${#BRANCHES[@]}] (Default 1=public): " choice
-    choice="${choice:-1}"; [[ "$choice" =~ ^[0-9]+$ ]] && (( choice>=1 && choice<=${#BRANCHES[@]} )) || choice=1
+    choice="${choice:-1}"
+    [[ "$choice" =~ ^[0-9]+$ ]] && (( choice>=1 && choice<=${#BRANCHES[@]} )) || choice=1
     SELECTED_BRANCH="${BRANCHES[$((choice-1))]}"
-    if [ "$SELECTED_BRANCH" != "public" ]; then
-      read -rp "Beta-Passwort für '${SELECTED_BRANCH}' (leer, falls keins): " BETAPASS
-    fi
   fi
 fi
 
+# Persistieren für Install/Update
 mkdir -p "${INSTALL_DIR}"
 printf "%s\n" "${APPID}" > "${INSTALL_DIR}/.appid"
 printf "%s\n" "${SELECTED_BRANCH}" > "${INSTALL_DIR}/.branch"
 chown -R "${APP_USER}:${APP_USER}" "${APP_HOME}"
+
 ok "AppID=${APPID}, Branch=${SELECTED_BRANCH}"
+if [ -n "${PREFERRED_BRANCH_NAME:-}" ] && [ "${PREFERRED_BRANCH_NAME}" != "${SELECTED_BRANCH}" ]; then
+  err "Hinweis: DF-Anforderung war '${PREFERRED_BRANCH_NAME}', gewählt wurde '${SELECTED_BRANCH}'. Prüfe Mod-Kompatibilität!"
+fi
