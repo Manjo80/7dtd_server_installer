@@ -2,17 +2,30 @@
 set -euo pipefail
 trap 'echo "Fehler in Zeile $LINENO" >&2' ERR
 
-# ======= Konfig =========
-# Nutzername MUSS mit Buchstabe beginnen (oder --allow-bad-names nutzen)
-APP_USER="${APP_USER:-sdays}"
+# ======= Konfig (per Env überschreibbar) =======
+APP_USER="${APP_USER:-sdays}"                            # Nutzer muss mit Buchstabe beginnen (oder --allow-bad-names)
 APP_HOME="/home/${APP_USER}"
 INSTALL_DIR="${INSTALL_DIR:-$APP_HOME/7days-server}"
-APPID="294420"
-STEAMCMD_DIR="/opt/steamcmd"
-STEAMCMD_BIN="/opt/steamcmd/steamcmd.sh"   # direkter Aufruf (kein kaputter Symlink)
-SCREEN_NAME="7d2d"
-SERVER_PARAMS="-configfile=serverconfig.xml -logfile 7d2d.log"
-# ========================
+APPID="${APPID:-294420}"                                 # 7 Days to Die Dedicated Server
+STEAMCMD_DIR="${STEAMCMD_DIR:-/opt/steamcmd}"
+STEAMCMD_BIN="${STEAMCMD_BIN:-/opt/steamcmd/steamcmd.sh}"# direkter Aufruf (kein Symlink-Problem)
+SCREEN_NAME="${SCREEN_NAME:-7d2d}"
+SERVER_PARAMS="${SERVER_PARAMS:- -configfile=serverconfig.xml -logfile 7d2d.log}"
+# =================================================
+
+# ---- CLI-Flags -------------------------------------------------
+SELECTED_BRANCH="${SELECTED_BRANCH:-}"
+BETAPASS="${BETAPASS:-}"
+NON_INTERACTIVE=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --appid)           APPID="$2"; shift 2 ;;
+    --branch)          SELECTED_BRANCH="$2"; shift 2 ;;
+    --betapass)        BETAPASS="$2"; shift 2 ;;
+    --non-interactive) NON_INTERACTIVE=1; shift ;;
+    *) echo "Unbekannte Option: $1" >&2; exit 2 ;;
+  esac
+done
 
 require_root() {
   if [ "${EUID:-$(id -u)}" -ne 0 ]; then
@@ -61,7 +74,7 @@ install_steamcmd() {
     tar xzf steamcmd_linux.tar.gz
   fi
 
-  # Als Komfort noch einen Wrapper in /usr/games/steamcmd (optional)
+  # Optionaler Wrapper in /usr/games/steamcmd (bequeme Abkürzung, aber wir nutzen STEAMCMD_BIN direkt)
   if [ ! -x /usr/games/steamcmd ]; then
     cat >/usr/games/steamcmd <<'EOF'
 #!/usr/bin/env bash
@@ -71,7 +84,7 @@ EOF
     chmod +x /usr/games/steamcmd
   fi
 
-  # Sicherstellen, dass linux32-Verzeichnis vorhanden ist (nach Entpacken sollte es das sein)
+  # Sicherstellen, dass linux32-Verzeichnis vorhanden ist
   [ -d "${STEAMCMD_DIR}/linux32" ] || {
     [ -f steamcmd_linux.tar.gz ] && tar xzf steamcmd_linux.tar.gz
   }
@@ -79,31 +92,79 @@ EOF
   echo "[+] SteamCMD bereit: ${STEAMCMD_BIN}"
 }
 
+choose_appid() {
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    echo "[*] AppID (non-interactive): $APPID"
+    return
+  fi
+  echo
+  echo "Standard-AppID ist 294420 (7 Days to Die Dedicated Server)."
+  read -rp "Andere AppID verwenden? (Enter für ${APPID}): " inp
+  inp="${inp:-$APPID}"
+  if [[ "$inp" =~ ^[0-9]+$ ]]; then
+    APPID="$inp"
+  else
+    echo "Ungültige AppID – bleibe bei ${APPID}."
+  fi
+  echo "[+] Verwende AppID: $APPID"
+}
+
 choose_branch() {
-  echo "[*] Ermittele verfügbare 7DTD-Branches..."
-  local tmp; tmp="$(mktemp)"; trap '[[ -n "${tmp:-}" ]] && rm -f "$tmp"; trap - RETURN' RETURN
+  # Steam App-Info holen
+  local tmp; tmp="$(mktemp)"
+  trap '[[ -n "${tmp:-}" ]] && rm -f "$tmp"; trap - RETURN' RETURN
   ( cd "${STEAMCMD_DIR}" && bash ./steamcmd.sh +login anonymous +app_info_print "${APPID}" +quit ) >"$tmp" || true
 
   BRANCHES=()
-  local in_branches=0
+  declare -A BR_BUILDID
+  declare -A BR_TIME
+
+  local in_branches=0 in_this=0 curr=""
   while IFS= read -r line; do
-    local l
-    l="$(echo "$line" | sed 's/^\s\+//; s/\s\+$//')"
-    if echo "$l" | grep -q '^"branches"$'; then in_branches=1; continue; fi
-    if [ $in_branches -eq 1 ]; then
-      [ "$l" = "}" ] && break
-      if echo "$l" | grep -E -q '^"[A-Za-z0-9_\-\.]+"\s*\{$'; then
-        local name
-        name="$(echo "$l" | sed 's/^\("\)\(.*\)\("\).*/\2/; s/\s*\{$//')"
-        [ "$name" != "local" ] && BRANCHES+=("$name")
-      fi
+    # trim
+    line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    if [[ "$line" == '"branches"' ]]; then in_branches=1; continue; fi
+    (( in_branches==1 )) || continue
+    [[ "$line" == "}" ]] && break
+
+    if [[ "$line" =~ ^\"([A-Za-z0-9._-]+)\"\s*\{$ ]]; then
+      curr="${BASH_REMATCH[1]}"; in_this=1
+      [[ "$curr" != "local" ]] && BRANCHES+=("$curr")
+      continue
+    fi
+    [[ $in_this -eq 1 ]] || continue
+    [[ "$line" == "}" ]] && { in_this=0; curr=""; continue; }
+
+    if [[ "$line" =~ ^\"buildid\"\s+\"([0-9]+)\"$ ]]; then
+      BR_BUILDID["$curr"]="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^\"timeupdated\"\s+\"([0-9]+)\"$ ]]; then
+      BR_TIME["$curr"]="${BASH_REMATCH[1]}"
     fi
   done <"$tmp"
+
   [ ${#BRANCHES[@]} -eq 0 ] && BRANCHES=(public)
 
-  echo "Verfügbare Branches:"
-  for i in "${!BRANCHES[@]}"; do
-    printf "  [%d] %s\n" "$((i+1))" "${BRANCHES[$i]}"
+  # Falls via Flag vorgegeben → nur validieren
+  if [ -n "$SELECTED_BRANCH" ]; then
+    local found=0
+    for b in "${BRANCHES[@]}"; do [[ "$b" == "$SELECTED_BRANCH" ]] && found=1 && break; done
+    if [ $found -eq 0 ]; then
+      echo "[!] Branch '$SELECTED_BRANCH' nicht gefunden. Verfügbare: ${BRANCHES[*]}" >&2
+      exit 1
+    fi
+    echo "[*] Verwende Branch (non-interactive): $SELECTED_BRANCH"
+    return
+  fi
+
+  echo "Verfügbare Branches (mit BuildID / Zeit):"
+  local i=1
+  for b in "${BRANCHES[@]}"; do
+    local when=""
+    if [[ -n "${BR_TIME[$b]:-}" ]]; then
+      when="$(date -d @"${BR_TIME[$b]}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "${BR_TIME[$b]}")"
+    fi
+    printf "  [%d] %-24s buildid=%-12s %s\n" "$i" "$b" "${BR_BUILDID[$b]:-?}" "${when}"
+    ((i++))
   done
   read -rp "Wähle Branch [1-${#BRANCHES[@]}] (Default 1=public): " choice
   choice="${choice:-1}"
@@ -113,31 +174,30 @@ choose_branch() {
   fi
   SELECTED_BRANCH="${BRANCHES[$((choice-1))]}"
 
-  BETA_ARGS=()
-  if [ "$SELECTED_BRANCH" != "public" ]; then
+  if [ "$SELECTED_BRANCH" != "public" ] && [ -z "$BETAPASS" ] && [ "$NON_INTERACTIVE" -eq 0 ]; then
     read -rp "Beta-Passwort für '${SELECTED_BRANCH}' (leer, falls keins): " BETAPASS
-    if [ -n "${BETAPASS:-}" ]; then
-      BETA_ARGS=(-beta "$SELECTED_BRANCH" -betapassword "$BETAPASS")
-    else
-      BETA_ARGS=(-beta "$SELECTED_BRANCH")
-    fi
   fi
   echo "[+] Gewählter Branch: $SELECTED_BRANCH"
 }
 
 install_server() {
-  echo "[*] Installiere 7DTD nach ${INSTALL_DIR} (Branch: ${SELECTED_BRANCH})..."
+  echo "[*] Installiere nach ${INSTALL_DIR} (AppID: ${APPID}, Branch: ${SELECTED_BRANCH:-public})..."
   mkdir -p "${INSTALL_DIR}"
   chown -R "${APP_USER}:${APP_USER}" "${APP_HOME}"
 
-  printf "%s\n" "${SELECTED_BRANCH}" > "${INSTALL_DIR}/.branch"
-  chown "${APP_USER}:${APP_USER}" "${INSTALL_DIR}/.branch"
+  printf "%s\n" "${APPID}" > "${INSTALL_DIR}/.appid"
+  printf "%s\n" "${SELECTED_BRANCH:-public}" > "${INSTALL_DIR}/.branch"
+  chown "${APP_USER}:${APP_USER}" "${INSTALL_DIR}/.appid" "${INSTALL_DIR}/.branch"
 
-  local cmd=("+force_install_dir" "${INSTALL_DIR}" "+login" "anonymous" "+app_update" "${APPID}")
-  if [ "${#BETA_ARGS[@]}" -gt 0 ]; then
-    cmd+=("${BETA_ARGS[@]}")
+  local cmd=(+force_install_dir "${INSTALL_DIR}" +login anonymous +app_update "${APPID}")
+  if [ -n "${SELECTED_BRANCH:-}" ] && [ "${SELECTED_BRANCH}" != "public" ]; then
+    if [ -n "${BETAPASS:-}" ]; then
+      cmd+=(-beta "${SELECTED_BRANCH}" -betapassword "${BETAPASS}")
+    else
+      cmd+=(-beta "${SELECTED_BRANCH}")
+    fi
   fi
-  cmd+=("validate" "+quit")
+  cmd+=(validate +quit)
 
   sudo -u "${APP_USER}" -H bash -lc "
     cd '${STEAMCMD_DIR}'
@@ -156,9 +216,9 @@ write_scripts() {
 set -euo pipefail
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STEAMCMD="/opt/steamcmd/steamcmd.sh"
-APPID="294420"
-SCREEN_NAME="7d2d"
-SERVER_PARAMS="-configfile=serverconfig.xml -logfile 7d2d.log"
+APPID="$(tr -d '[:space:]' < "${INSTALL_DIR}/.appid" 2>/dev/null || echo 294420)"
+SCREEN_NAME="${SCREEN_NAME:-7d2d}"
+SERVER_PARAMS="${SERVER_PARAMS:- -configfile=serverconfig.xml -logfile 7d2d.log}"
 TELNET_HOST="127.0.0.1"
 TELNET_PORT="8081"
 TELNET_PASS=""
@@ -209,46 +269,61 @@ EOS
   chmod +x "${INSTALL_DIR}/bin/manage.sh"
   chown "${APP_USER}:${APP_USER}" "${INSTALL_DIR}/bin/manage.sh"
 
-  # update.sh
+  # update.sh (liest .appid/.branch, listet Branches mit Build/Zeit)
   cat > "${INSTALL_DIR}/bin/update.sh" <<'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STEAMCMD="/opt/steamcmd/steamcmd.sh"
-APPID="294420"
+APPID="$(tr -d '[:space:]' < "${INSTALL_DIR}/.appid" 2>/dev/null || echo 294420)"
 cd "$INSTALL_DIR"
 
-default_branch="public"
-[ -f "${INSTALL_DIR}/.branch" ] && default_branch="$(tr -d '[:space:]' < "${INSTALL_DIR}/.branch")"
-
+default_branch="$(tr -d '[:space:]' < "${INSTALL_DIR}/.branch" 2>/dev/null || echo public)"
 if [ ! -x "$STEAMCMD" ]; then
   echo "steamcmd nicht gefunden unter $STEAMCMD"
   exit 1
 fi
 
-TMP="$(mktemp)"; trap 'rm -f "$TMP"' EXIT
+tmp="$(mktemp)"
+trap '[[ -n "${tmp:-}" ]] && rm -f "$tmp"; trap - RETURN' RETURN
 echo "[*] Hole Branch-Infos..."
-( cd /opt/steamcmd && bash ./steamcmd.sh +login anonymous +app_info_print "$APPID" +quit ) >"$TMP" || true
+( cd /opt/steamcmd && bash ./steamcmd.sh +login anonymous +app_info_print "$APPID" +quit ) >"$tmp" || true
 
 branches=()
+declare -A BR_BUILDID
+declare -A BR_TIME
 in_branches=0
+in_this=0
+curr=""
 while IFS= read -r line; do
-  l="$(echo "$line" | sed 's/^\s\+//; s/\s\+$//')"
-  if echo "$l" | grep -q '^"branches"$'; then in_branches=1; continue; fi
-  if [ $in_branches -eq 1 ]; then
-    [ "$l" = "}" ] && break
-    if echo "$l" | grep -E -q '^"[A-Za-z0-9_\-\.]+"\s*\{$'; then
-      name="$(echo "$l" | sed 's/^\("\)\(.*\)\("\).*/\2/; s/\s*\{$//')"
-      [ "$name" != "local" ] && branches+=("$name")
-    fi
+  line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+  if [[ "$line" == '"branches"' ]]; then in_branches=1; continue; fi
+  (( in_branches==1 )) || continue
+  [[ "$line" == "}" ]] && break
+  if [[ "$line" =~ ^\"([A-Za-z0-9._-]+)\"\s*\{$ ]]; then
+    curr="${BASH_REMATCH[1]}"; in_this=1
+    [[ "$curr" != "local" ]] && branches+=("$curr")
+    continue
   fi
-done <"$TMP"
+  [[ $in_this -eq 1 ]] || continue
+  [[ "$line" == "}" ]] && { in_this=0; curr=""; continue; }
+  if [[ "$line" =~ ^\"buildid\"\s+\"([0-9]+)\"$ ]]; then
+    BR_BUILDID["$curr"]="${BASH_REMATCH[1]}"
+  elif [[ "$line" =~ ^\"timeupdated\"\s+\"([0-9]+)\"$ ]]; then
+    BR_TIME["$curr"]="${BASH_REMATCH[1]}"
+  fi
+done <"$tmp"
+
 [ ${#branches[@]} -eq 0 ] && branches=("public")
 
 echo "Verfügbare Branches:"
 def_idx=1
 for i in "${!branches[@]}"; do
-  printf "  [%d] %s\n" "$((i+1))" "${branches[$i]}"
+  when=""
+  if [[ -n "${BR_TIME[${branches[$i]}]:-}" ]]; then
+    when="$(date -d @"${BR_TIME[${branches[$i]}]}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "${BR_TIME[${branches[$i]}]}")"
+  fi
+  printf "  [%d] %-24s buildid=%-12s %s\n" "$((i+1))" "${branches[$i]}" "${BR_BUILDID[${branches[$i]}]:-?}" "${when}"
   [ "${branches[$i]}" = "$default_branch" ] && def_idx="$((i+1))"
 done
 
@@ -293,7 +368,7 @@ tweak_serverconfig() {
     chown "${APP_USER}:${APP_USER}" "${cfg}"
     echo "[+] Telnet Passwort: ${pass}"
   else
-    echo "[!] serverconfig.xml nicht gefunden – erster Start erzeugt sie ggf. erst."
+    echo "[!] serverconfig.xml nicht gefunden – erster Start erzeugt sie ggf.."
   fi
 }
 
@@ -356,6 +431,7 @@ main() {
   pkg_install
   ensure_user
   install_steamcmd
+  choose_appid
   choose_branch
   install_server
   write_scripts
