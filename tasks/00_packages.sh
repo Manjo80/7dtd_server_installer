@@ -7,7 +7,7 @@ source "${BASE_DIR}/config.env"
 source "${BASE_DIR}/lib/common.sh"
 
 log "System aktualisieren & Basispackages installieren…"
-ensure_pkgs sudo ca-certificates tzdata wget curl xz-utils tar nano screen telnet netcat-openbsd file procps unzip
+ensure_pkgs sudo ca-certificates tzdata wget curl xz-utils tar nano screen telnet netcat-openbsd file procps unzip xmlstarlet 
 
 # 32-bit Libs (benötigt von steamcmd/7dtd)
 if apt-cache show lib32gcc-s1 >/dev/null 2>&1; then
