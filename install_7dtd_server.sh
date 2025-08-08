@@ -8,7 +8,7 @@ APP_HOME="/home/${APP_USER}"
 INSTALL_DIR="${INSTALL_DIR:-$APP_HOME/7days-server}"
 APPID="${APPID:-294420}"                                 # 7 Days to Die Dedicated Server
 STEAMCMD_DIR="${STEAMCMD_DIR:-/opt/steamcmd}"
-STEAMCMD_BIN="${STEAMCMD_BIN:-/opt/steamcmd/steamcmd.sh}"# direkter Aufruf (kein Symlink-Problem)
+STEAMCMD_BIN="${STEAMCMD_BIN:-/opt/steamcmd/steamcmd.sh}"  # direkter Aufruf (kein Symlink-Problem)
 SCREEN_NAME="${SCREEN_NAME:-7d2d}"
 SERVER_PARAMS="${SERVER_PARAMS:- -configfile=serverconfig.xml -logfile 7d2d.log}"
 # =================================================
