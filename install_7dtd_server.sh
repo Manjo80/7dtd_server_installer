@@ -81,7 +81,7 @@ EOF
 
 choose_branch() {
   echo "[*] Ermittele verfügbare 7DTD-Branches..."
-  local tmp; tmp="$(mktemp)"; trap 'rm -f "$tmp"' RETURN
+  local tmp; tmp="$(mktemp)"; trap '[[ -n "${tmp:-}" ]] && rm -f "$tmp"; trap - RETURN' RETURN
   ( cd "${STEAMCMD_DIR}" && bash ./steamcmd.sh +login anonymous +app_info_print "${APPID}" +quit ) >"$tmp" || true
 
   BRANCHES=()
