@@ -21,6 +21,7 @@ TASKS=(
   "05_choose_mod.sh" 
   "40_choose_version.sh"  
   "50_server_install.sh"
+  "45_configure_server.sh"
   "60_scripts.sh"
   "80_darkness_falls.sh"   
   "70_systemd.sh"
