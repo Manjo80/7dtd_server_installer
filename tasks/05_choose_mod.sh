@@ -23,13 +23,13 @@ if [ "${NON_INTERACTIVE:-0}" -eq 0 ]; then
       INSTALL_DARKNESS_FALLS=1
       # Achtung: Link ggf. pflegen, falls sich die Quelle ändert.
       # (Offiziell verlinken die Buttons auf ZIP-Archive der DF-Repos.)
-      DARKNESS_FALLS_URL="${DARKNESS_FALLS_URL:-https://dev.azure.com/KhaineUK/292933d3-b55a-46b5-9fbc-f4e138ad47a4/_apis/git/repositories/0571597f-cf8c-42cd-8e35-7e799218cfe7/items?\$format=zip&api-version=5.0&download=true&path=%2F&resolveLfs=true&versionDescriptor%5BversionOptions%5D=0&versionDescriptor%5BversionType%5D=0&versionDescriptor%5Bversion%5D=master}"
+      DARKNESS_FALLS_URL="${DARKNESS_FALLS_URL:-https://dev.azure.com/KhaineUK/292933d3-b55a-46b5-9fbc-f4e138ad47a4/_apis/git/repositories/0571597f-cf8c-42cd-8e35-7e799218cfe7/items?path=/&versionDescriptor%5BversionOptions%5D=0&versionDescriptor%5BversionType%5D=0&versionDescriptor%5Bversion%5D=master&resolveLfs=true&%24format=zip&api-version=5.0&download=true}"
       # Für DF V5.1.0 brauchen wir Alpha 21.x → priorisiere beta-Branch alpha21.2
       PREFERRED_BRANCH_NAME="${PREFERRED_BRANCH_NAME:-alpha21.2}"
       ;;
     3)
       INSTALL_DARKNESS_FALLS=1
-      DARKNESS_FALLS_URL="${DARKNESS_FALLS_URL:-https://dev.azure.com/KhaineUK/f8438d9f-d741-420b-9429-f0838ed77e7f/_apis/git/repositories/80d717da-eb1e-4211-b0c2-eae2d478e749/items?\$format=zip&api-version=5.0&download=true&path=%2F&resolveLfs=true&versionDescriptor%5BversionOptions%5D=0&versionDescriptor%5BversionType%5D=0&versionDescriptor%5Bversion%5D=main}"
+      DARKNESS_FALLS_URL="${DARKNESS_FALLS_URL:-https://dev.azure.com/KhaineUK/f8438d9f-d741-420b-9429-f0838ed77e7f/_apis/git/repositories/80d717da-eb1e-4211-b0c2-eae2d478e749/items?path=/&versionDescriptor%5BversionOptions%5D=0&versionDescriptor%5BversionType%5D=0&versionDescriptor%5Bversion%5D=main&resolveLfs=true&%24format=zip&api-version=5.0&download=true}"
       # Für DF V6 brauchen wir 1.0 → public (kein -beta)
       PREFERRED_BRANCH_NAME="${PREFERRED_BRANCH_NAME:-public}"
       ;;
