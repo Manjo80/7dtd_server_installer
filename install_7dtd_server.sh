@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'echo "Fehler in Zeile $LINENO" >&2' ERR
 
 # ======= Konfig =========
-APP_USER="sevendays"                           
+# Nutzername MUSS mit Buchstabe beginnen (oder --allow-bad-names nutzen)
+APP_USER="${APP_USER:-sdays}"
 APP_HOME="/home/${APP_USER}"
-INSTALL_DIR="${APP_HOME}/7days-server"
+INSTALL_DIR="${INSTALL_DIR:-$APP_HOME/7days-server}"
 APPID="294420"
 STEAMCMD_DIR="/opt/steamcmd"
-STEAMCMD_BIN="/usr/games/steamcmd"
+STEAMCMD_BIN="/opt/steamcmd/steamcmd.sh"   # direkter Aufruf (kein kaputter Symlink)
 SCREEN_NAME="7d2d"
 SERVER_PARAMS="-configfile=serverconfig.xml -logfile 7d2d.log"
 # ========================
@@ -28,48 +30,59 @@ pkg_install() {
     sudo ca-certificates tzdata wget curl xz-utils tar nano screen \
     telnet netcat-openbsd file procps
 
-  # 32-bit lib für Steam/7d2d
+  # 32-bit Libs für Steam/7DTD (beide Varianten abdecken)
   if apt-cache show lib32gcc-s1 >/dev/null 2>&1; then
     apt-get install -y lib32gcc-s1 || true
   elif apt-cache show lib32gcc1 >/dev/null 2>&1; then
     apt-get install -y lib32gcc1 || true
   fi
+  apt-get install -y lib32stdc++6 || true
 }
 
 ensure_user() {
   echo "[*] Prüfe/erstelle User ${APP_USER}..."
   if ! id -u "${APP_USER}" >/dev/null 2>&1; then
-    adduser --disabled-password --gecos "" "${APP_USER}" || adduser --disabled-password --gecos "" --allow-bad-names "${APP_USER}"
+    adduser --disabled-password --gecos "" "${APP_USER}" \
+      || adduser --disabled-password --gecos "" --allow-bad-names "${APP_USER}"
   fi
 }
 
 install_steamcmd() {
-  echo "[*] Installiere SteamCMD (manuell, idempotent)..."
+  echo "[*] Installiere SteamCMD (idempotent)..."
   mkdir -p "${STEAMCMD_DIR}"
   cd "${STEAMCMD_DIR}"
 
-  # Nur laden, wenn nichts da
+  # Laden nur, wenn nichts da
   if [ ! -f steamcmd.sh ] && [ ! -f steamcmd_linux.tar.gz ]; then
     wget -q http://media.steampowered.com/installer/steamcmd_linux.tar.gz
   fi
-  # Nur entpacken, wenn steamcmd.sh fehlt
+  # Entpacken nur, wenn fehlt
   if [ ! -f steamcmd.sh ] && [ -f steamcmd_linux.tar.gz ]; then
     tar xzf steamcmd_linux.tar.gz
   fi
 
-  mkdir -p /usr/games
-  # Symlink nur setzen, wenn er fehlt
-  if [ ! -e "${STEAMCMD_BIN}" ]; then
-    ln -s "${STEAMCMD_DIR}/steamcmd.sh" "${STEAMCMD_BIN}"
+  # Als Komfort noch einen Wrapper in /usr/games/steamcmd (optional)
+  if [ ! -x /usr/games/steamcmd ]; then
+    cat >/usr/games/steamcmd <<'EOF'
+#!/usr/bin/env bash
+cd /opt/steamcmd
+exec bash ./steamcmd.sh "$@"
+EOF
+    chmod +x /usr/games/steamcmd
   fi
-  echo "[+] SteamCMD bereit unter ${STEAMCMD_BIN}"
+
+  # Sicherstellen, dass linux32-Verzeichnis vorhanden ist (nach Entpacken sollte es das sein)
+  [ -d "${STEAMCMD_DIR}/linux32" ] || {
+    [ -f steamcmd_linux.tar.gz ] && tar xzf steamcmd_linux.tar.gz
+  }
+
+  echo "[+] SteamCMD bereit: ${STEAMCMD_BIN}"
 }
 
 choose_branch() {
   echo "[*] Ermittele verfügbare 7DTD-Branches..."
-  local tmp
-  tmp="$(mktemp)"; trap 'rm -f "$tmp"' RETURN
-  "${STEAMCMD_BIN}" +login anonymous +app_info_print "${APPID}" +quit >"$tmp" || true
+  local tmp; tmp="$(mktemp)"; trap 'rm -f "$tmp"' RETURN
+  ( cd "${STEAMCMD_DIR}" && bash ./steamcmd.sh +login anonymous +app_info_print "${APPID}" +quit ) >"$tmp" || true
 
   BRANCHES=()
   local in_branches=0
@@ -86,10 +99,7 @@ choose_branch() {
       fi
     fi
   done <"$tmp"
-
-  if [ ${#BRANCHES[@]} -eq 0 ]; then
-    BRANCHES=(public)
-  fi
+  [ ${#BRANCHES[@]} -eq 0 ] && BRANCHES=(public)
 
   echo "Verfügbare Branches:"
   for i in "${!BRANCHES[@]}"; do
@@ -101,8 +111,8 @@ choose_branch() {
     echo "Ungültig, nehme 1."
     choice=1
   fi
-
   SELECTED_BRANCH="${BRANCHES[$((choice-1))]}"
+
   BETA_ARGS=()
   if [ "$SELECTED_BRANCH" != "public" ]; then
     read -rp "Beta-Passwort für '${SELECTED_BRANCH}' (leer, falls keins): " BETAPASS
@@ -130,7 +140,8 @@ install_server() {
   cmd+=("validate" "+quit")
 
   sudo -u "${APP_USER}" -H bash -lc "
-    '${STEAMCMD_BIN}' ${cmd[*]}
+    cd '${STEAMCMD_DIR}'
+    bash ./steamcmd.sh ${cmd[*]}
   "
 }
 
@@ -144,7 +155,7 @@ write_scripts() {
 #!/usr/bin/env bash
 set -euo pipefail
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STEAMCMD="/usr/games/steamcmd"
+STEAMCMD="/opt/steamcmd/steamcmd.sh"
 APPID="294420"
 SCREEN_NAME="7d2d"
 SERVER_PARAMS="-configfile=serverconfig.xml -logfile 7d2d.log"
@@ -203,7 +214,7 @@ EOS
 #!/usr/bin/env bash
 set -euo pipefail
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STEAMCMD="/usr/games/steamcmd"
+STEAMCMD="/opt/steamcmd/steamcmd.sh"
 APPID="294420"
 cd "$INSTALL_DIR"
 
@@ -217,7 +228,7 @@ fi
 
 TMP="$(mktemp)"; trap 'rm -f "$TMP"' EXIT
 echo "[*] Hole Branch-Infos..."
-"$STEAMCMD" +login anonymous +app_info_print "$APPID" +quit >"$TMP" || true
+( cd /opt/steamcmd && bash ./steamcmd.sh +login anonymous +app_info_print "$APPID" +quit ) >"$TMP" || true
 
 branches=()
 in_branches=0
@@ -232,7 +243,6 @@ while IFS= read -r line; do
     fi
   fi
 done <"$TMP"
-
 [ ${#branches[@]} -eq 0 ] && branches=("public")
 
 echo "Verfügbare Branches:"
@@ -262,7 +272,7 @@ fi
 
 echo "$BRANCH" > "${INSTALL_DIR}/.branch"
 echo "[*] Update läuft auf Branch: $BRANCH"
-"$STEAMCMD" +force_install_dir "$INSTALL_DIR" +login anonymous +app_update "$APPID" "${BETA_ARGS[@]}" validate +quit
+( cd /opt/steamcmd && bash ./steamcmd.sh +force_install_dir "$INSTALL_DIR" +login anonymous +app_update "$APPID" "${BETA_ARGS[@]}" validate +quit )
 echo "[+] Update fertig."
 EOS
   chmod +x "${INSTALL_DIR}/bin/update.sh"
@@ -323,7 +333,7 @@ summary() {
 ==================== FERTIG ====================
 User:        ${APP_USER}
 Install:     ${INSTALL_DIR}
-SteamCMD:    ${STEAMCMD_BIN}
+SteamCMD:    ${STEAMCMD_BIN} (Wrapper /usr/games/steamcmd vorhanden)
 Branch:      ${SELECTED_BRANCH:-public}
 Service:     7d2d (falls systemd vorhanden)
 
