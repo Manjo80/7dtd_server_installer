@@ -3,6 +3,7 @@
 set -euo pipefail
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${BASE_DIR}/config.env"
+[ -f "${BASE_DIR}/config.local" ] && source "${BASE_DIR}/config.local"
 source "${BASE_DIR}/lib/common.sh"
 
 # AppID ggf. interaktiv ändern
