@@ -6,42 +6,36 @@ source "${BASE_DIR}/config.env"
 source "${BASE_DIR}/lib/common.sh"
 
 if [ "${INSTALL_DARKNESS_FALLS:-0}" -ne 1 ]; then
-  log "Darkness Falls: übersprungen (INSTALL_DARKNESS_FALLS!=1)."
+  log "Darkness Falls: übersprungen."
   exit 0
 fi
+[ -n "${DARKNESS_FALLS_URL:-}" ] || { err "DF: Keine URL gesetzt."; exit 1; }
 
-if [ -z "${DARKNESS_FALLS_URL:-}" ]; then
-  err "Darkness Falls: Keine DARKNESS_FALLS_URL gesetzt. Abbruch."
-  exit 1
-fi
-
-log "Darkness Falls Mod wird installiert…"
+log "Darkness Falls herunterladen und installieren…"
 install -d -m 755 "${MODS_DIR}"
-chown -R "${APP_USER}:${APP_USER}" "$(dirname "${MODS_DIR}")"
+chown -R "${APP_USER}:${APP_USER}" "${INSTALL_DIR}"
 
-tmp="$(mktemp)"
-trap '[[ -n "${tmp:-}" ]] && rm -f "$tmp"; trap - RETURN' RETURN
+tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
 
-# Server stoppen, falls läuft (best effort)
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl stop 7d2d || true
+# Server stoppen (best effort), damit Dateien frei sind
+if command -v systemctl >/dev/null 2>&1; then systemctl stop 7d2d || true; fi
+
+# ZIP holen und entpacken
+wget -O "${tmpdir}/df.zip" "${DARKNESS_FALLS_URL}"
+unzip -q -o "${tmpdir}/df.zip" -d "${tmpdir}/df"
+
+# a) Falls ZIP bereits 'Mods/' enthält -> Inhalt nach ${MODS_DIR} verschieben
+if [ -d "${tmpdir}/df/Mods" ]; then
+  rsync -a --delete "${tmpdir}/df/Mods/" "${MODS_DIR}/"
+else
+  # b) Ansonsten alles, was wie DF-Mods aussieht, in Mods/ kopieren
+  # (Ordner mit ModInfo.xml)
+  find "${tmpdir}/df" -type f -name ModInfo.xml -printf '%h\0' | \
+    xargs -0 -I{} rsync -a "{}/" "${MODS_DIR}/$(basename "{}")/"
 fi
 
-# ZIP holen und entpacken als Spiel-User (falls Schreibrechte notwendig)
-sudo -u "${APP_USER}" bash -lc "
-  set -e
-  cd '${MODS_DIR}'
-  wget -O '${tmp##*/}.zip' '${DARKNESS_FALLS_URL}'
-  unzip -o '${tmp##*/}.zip'
-  rm -f '${tmp##*/}.zip'
-"
-
-# Hinweis: Manche DF-Pakete enthalten eine 'Mods' Struktur. Falls doppelte Ebene -> flachziehen
-# (Optional – je nach Paketaufbau. Wenn nötig, hier verschieben.)
-
+chown -R "${APP_USER}:${APP_USER}" "${MODS_DIR}"
 ok "Darkness Falls installiert in ${MODS_DIR}"
 
-# Service ggf. wieder starten
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl start 7d2d || true
-fi
+# Server wieder starten
+if command -v systemctl >/dev/null 2>&1; then systemctl start 7d2d || true; fi
